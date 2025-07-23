@@ -81,7 +81,7 @@ class AppleAuthService:
                 identity_token,
                 public_key,
                 algorithms=["RS256"],
-                audience=settings.apple_team_id,  # Your app's bundle ID or team ID
+                audience="com.azimislom.yodlaApp",
                 issuer=APPLE_ISSUER
             )
 
