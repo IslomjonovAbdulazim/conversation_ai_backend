@@ -50,7 +50,9 @@ class GoogleVisionService:
             return image_content
 
         try:
-            image = Image.open(io.BytesIO(image_content))
+            image_io = io.BytesIO(image_content)
+            image_io.seek(0)
+            image = Image.open(image_io)
 
             # Calculate new size to fit within max_size
             width, height = image.size
@@ -63,7 +65,10 @@ class GoogleVisionService:
 
             output = io.BytesIO()
             resized_image.save(output, format='JPEG', quality=80, optimize=True)
-            return output.getvalue()
+            resized_bytes = output.getvalue()
+
+            logger.info(f"Resized image from {len(image_content)} to {len(resized_bytes)} bytes")
+            return resized_bytes
 
         except Exception as e:
             logger.error(f"Failed to resize image: {e}")
