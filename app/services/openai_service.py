@@ -59,8 +59,6 @@ class OpenAIService:
 
     # Add this function to app/services/openai_service.py
 
-    # Add this function to app/services/openai_service.py
-
     async def filter_best_vocabulary_words(self, word_list: List[str]) -> List[str]:
         """
         Use AI to select the best vocabulary words from extracted text
@@ -73,25 +71,23 @@ class OpenAIService:
             words_text = ", ".join(word_list)
 
             prompt = f"""
-            From this list of words extracted from an image, select vocabulary words for English learning.
+            From this list of words extracted from an image, select the 10-30 BEST vocabulary words for English learning.
 
             Word list: {words_text}
 
             Selection criteria:
-            - Choose words that are useful for vocabulary building
-            - Skip only the most basic words (a, the, and, is, am, are, etc.)
-            - Include words that are:
-              * Nouns (computer, kitchen, business, meeting, document)
-              * Verbs (develop, manage, create, discuss, analyze)
-              * Adjectives (efficient, professional, modern, important)
-              * Any word 4+ letters that could be useful for learning
-            - Skip: very short words (a, an, is, am, of, to, at, in, on)
-            - Skip: numbers, abbreviations, obvious proper nouns
-            - Be GENEROUS - include words that could help vocabulary building
-            - Return 15-25 words if available, prioritize quantity while maintaining quality
+            - Choose words that are USEFUL for vocabulary building
+            - Skip very common words (a, the, and, etc.)
+            - Skip proper nouns, numbers, and abbreviations  
+            - Prefer words that are:
+              * Concrete nouns (computer, kitchen, business)
+              * Useful verbs (develop, manage, create)
+              * Important adjectives (efficient, professional, modern)
+              * Academic/professional terms
+            - Skip: articles, prepositions, pronouns, very basic words
+            - Return 10-30 words maximum, prioritize quality over quantity
 
-            Return ONLY the selected words, comma-separated, no explanations.
-            Order them by learning value (most useful first):
+            Return ONLY the selected words, comma-separated, no explanations:
             """
 
             response = self.client.chat.completions.create(
@@ -99,15 +95,15 @@ class OpenAIService:
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are an English vocabulary teacher. Be generous in selecting words that could help language learning. Don't be overly restrictive - include any word that has educational value."
+                        "content": "You are an expert English vocabulary teacher. Select only the most valuable words for language learning from any given list."
                     },
                     {
                         "role": "user",
                         "content": prompt
                     }
                 ],
-                max_tokens=300,  # Increased for more words
-                temperature=0.2  # Lower temperature for consistency
+                max_tokens=200,
+                temperature=0.3
             )
 
             filtered_response = response.choices[0].message.content.strip()
@@ -118,20 +114,16 @@ class OpenAIService:
                 # Remove any empty strings and ensure uniqueness
                 filtered_words = list(set([word for word in filtered_words if word and len(word) >= 3]))
 
-                logger.info(f"AI filtered {len(word_list)} words down to {len(filtered_words)} vocabulary words")
-                return filtered_words[:25]  # Increased limit to 25
+                logger.info(
+                    f"AI filtered {len(word_list)} words down to {len(filtered_words)} quality vocabulary words")
+                return filtered_words[:30]  # Hard limit of 30
 
             return []
 
         except Exception as e:
             logger.error(f"Error filtering vocabulary words: {str(e)}")
-            # Better fallback: return more words if AI filtering fails
-            basic_stop_words = {'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 'was',
-                                'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 'man', 'new', 'now',
-                                'old', 'see', 'two', 'way', 'who', 'boy', 'did', 'its', 'let', 'put', 'say', 'she',
-                                'too', 'use'}
-            fallback_words = [word for word in word_list if word.lower() not in basic_stop_words and len(word) >= 4]
-            return fallback_words[:20]
+            # Fallback: return first 20 words if AI filtering fails
+            return word_list[:20]
 
     async def generate_example_sentence(self, english_word: str, uzbek_translation: str) -> str:
         """

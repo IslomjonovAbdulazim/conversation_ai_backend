@@ -131,8 +131,6 @@ def create_word_stats(word_id: int, user_id: int, db: Session):
 
 # Update the upload_photo_ocr function in app/routers/words.py
 
-# Update the upload_photo_ocr function in app/routers/words.py
-
 @router.post("/upload-photo", response_model=OCRResponse)
 async def upload_photo_ocr(
         file: UploadFile = File(...),
@@ -186,55 +184,20 @@ async def upload_photo_ocr(
 
         logger.info(f"AI filtered down to {len(filtered_words)} quality words")
 
-        # Step 3: Translate filtered words with confidence scoring
+        # Step 3: Translate only the filtered words
         translated_words = []
         for word in filtered_words:
             try:
                 translation = await translate_to_uzbek(word)
                 if translation and translation != word:  # Skip if translation failed
-                    # Assign confidence based on word characteristics
-                    confidence = 0.95 if len(word) >= 7 else 0.88 if len(word) >= 5 else 0.75
-
                     translated_words.append(ExtractedWord(
                         word=word.lower(),
                         translation=translation,
-                        confidence=confidence
+                        confidence=0.9  # High confidence for AI-filtered words
                     ))
             except Exception as e:
                 logger.warning(f"Failed to translate word '{word}': {str(e)}")
                 continue
-
-        # Sort by confidence level (highest first)
-        translated_words.sort(key=lambda x: x.confidence, reverse=True)
-
-        if len(translated_words) < 5:
-            # If we got very few words, try a more lenient approach
-            logger.warning(f"Only got {len(translated_words)} words, trying fallback approach")
-
-            # Fallback: less strict filtering
-            basic_stop_words = {'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 'was',
-                                'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 'man', 'new', 'now',
-                                'old', 'see', 'two', 'way', 'who', 'boy', 'did', 'its', 'let', 'put', 'say', 'she',
-                                'too', 'use'}
-            fallback_words = [word for word in all_words if word.lower() not in basic_stop_words and len(word) >= 4]
-
-            # Try translating more words
-            for word in fallback_words[:15]:
-                if word.lower() not in [tw.word for tw in translated_words]:  # Avoid duplicates
-                    try:
-                        translation = await translate_to_uzbek(word)
-                        if translation and translation != word:
-                            confidence = 0.65  # Lower confidence for fallback words
-                            translated_words.append(ExtractedWord(
-                                word=word.lower(),
-                                translation=translation,
-                                confidence=confidence
-                            ))
-                    except Exception as e:
-                        continue
-
-            # Re-sort after adding fallback words
-            translated_words.sort(key=lambda x: x.confidence, reverse=True)
 
         if not translated_words:
             raise HTTPException(
