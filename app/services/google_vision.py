@@ -132,6 +132,50 @@ class GoogleVisionService:
             logger.error(f"Error extracting words: {str(e)}")
             return []
 
+    async def extract_text_from_content(self, image_content: bytes) -> List[str]:
+        """
+        Extract text from image content (bytes) and return ALL meaningful words (for AI filtering)
+        """
+        try:
+            # Call Google Vision API
+            response_data = await self.call_vision_api_with_key(image_content)
+
+            # Check for errors
+            if "error" in response_data:
+                logger.error(f"Google Vision API error: {response_data['error']}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Vision API error: {response_data['error']}"
+                )
+
+            responses = response_data.get("responses", [])
+            if not responses:
+                logger.info("No response from Google Vision API")
+                return []
+
+            text_annotations = responses[0].get("textAnnotations", [])
+            if not text_annotations:
+                logger.info("No text detected in image")
+                return []
+
+            # First annotation contains all detected text
+            full_text = text_annotations[0].get("description", "")
+
+            # Extract ALL meaningful words - let AI do the smart filtering
+            all_words = self.extract_all_words(full_text)
+
+            logger.info(f"Extracted {len(all_words)} words for AI filtering")
+            return all_words
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error extracting text from image content: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Image processing failed: {str(e)}"
+            )
+
     async def extract_text_from_image(self, image_file: UploadFile) -> List[str]:
         """
         Extract text from image and return ALL meaningful words (for AI filtering)

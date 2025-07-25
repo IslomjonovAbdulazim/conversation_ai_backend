@@ -129,7 +129,6 @@ def create_word_stats(word_id: int, user_id: int, db: Session):
     return word_stats
 
 
-# SPECIFIC ROUTES FIRST - these must come before parameterized routes
 # Update the upload_photo_ocr function in app/routers/words.py
 
 @router.post("/upload-photo", response_model=OCRResponse)
@@ -151,10 +150,9 @@ async def upload_photo_ocr(
                 detail=f"Unsupported file type: {file.content_type}. Allowed: {', '.join(allowed_types)}"
             )
 
-        # Check file size (max 10MB)
-        file.seek(0, 2)  # Seek to end
-        file_size = file.tell()
-        file.seek(0)  # Reset to beginning
+        # Check file size (max 10MB) by reading content
+        file_content = await file.read()
+        file_size = len(file_content)
 
         if file_size > 10 * 1024 * 1024:
             raise HTTPException(
@@ -162,8 +160,9 @@ async def upload_photo_ocr(
                 detail="File too large. Maximum size is 10MB"
             )
 
-        # Step 1: Extract ALL words using Google Vision
-        all_words = await extract_text_from_image(file)
+        # Step 1: Extract ALL words using Google Vision (pass content directly)
+        from app.services.google_vision import google_vision_service
+        all_words = await google_vision_service.extract_text_from_content(file_content)
 
         if not all_words:
             raise HTTPException(
@@ -225,7 +224,6 @@ async def upload_photo_ocr(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to process image"
         )
-
 @router.post("/bulk-delete", response_model=BulkDeleteResponse)
 async def bulk_delete_words(
         request: BulkDeleteRequest,
