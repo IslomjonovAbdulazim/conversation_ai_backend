@@ -265,10 +265,12 @@ async def bulk_delete_words(
 @router.post("/generate-example", response_model=GenerateExampleResponse)
 async def generate_example(
         request: GenerateExampleRequest,
-        current_user: User = Depends(get_current_user)
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db)
 ):
     """
     Generate example sentence for English word + Uzbek translation
+    Provides variation if word already exists with examples
     """
     try:
         if not request.word or not request.translation:
@@ -277,9 +279,30 @@ async def generate_example(
                 detail="Both word and translation are required"
             )
 
-        example_sentence = await generate_example_sentence(
-            request.word.strip(),
-            request.translation.strip()
+        word_clean = request.word.strip().lower()
+        translation_clean = request.translation.strip()
+
+        # Check if this word already exists in user's folders
+        existing_words = db.query(Word).join(Folder).filter(
+            Folder.user_id == current_user.id,
+            Word.word.ilike(word_clean)
+        ).all()
+
+        existing_examples = []
+        if existing_words:
+            # Collect existing examples to avoid duplicates
+            existing_examples = [
+                word.example_sentence for word in existing_words
+                if word.example_sentence and word.example_sentence.strip()
+            ]
+
+            logger.info(f"Found {len(existing_examples)} existing examples for '{word_clean}'")
+
+        # Generate new example with variation
+        example_sentence = await generate_example_sentence_with_variation(
+            word_clean,
+            translation_clean,
+            existing_examples
         )
 
         if not example_sentence:
@@ -292,7 +315,7 @@ async def generate_example(
 
         return GenerateExampleResponse(
             example_sentence=example_sentence,
-            alternatives=[]  # Could add multiple examples in future
+            alternatives=[]  # Keep empty as requested
         )
 
     except HTTPException:
@@ -303,6 +326,95 @@ async def generate_example(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to generate example sentence"
         )
+
+
+async def generate_example_sentence_with_variation(
+        english_word: str,
+        uzbek_translation: str,
+        existing_examples: List[str] = None
+) -> str:
+    """
+    Enhanced example generation with variation and duplicate prevention
+    """
+    try:
+        # Build prompt with variation instructions
+        existing_text = ""
+        if existing_examples:
+            existing_text = f"\n\nAvoid duplicating these existing examples:\n" + "\n".join(
+                f"- {ex}" for ex in existing_examples)
+
+        # Add randomness to prompt style
+        import random
+        variation_prompts = [
+            "Create a simple, clear example sentence",
+            "Make a practical, everyday example sentence",
+            "Write a natural, conversational example sentence",
+            "Generate a clear, educational example sentence"
+        ]
+
+        base_prompt = random.choice(variation_prompts)
+
+        prompt = f"""
+        {base_prompt} using the English word "{english_word}" (which means "{uzbek_translation}" in Uzbek).
+
+        Requirements:
+        - Use everyday, simple English suitable for language learners
+        - Keep it under 15 words
+        - Make sure the meaning of "{english_word}" is clear from context
+        - Create a unique example different from any existing ones
+        {existing_text}
+
+        Example sentence:
+        """
+
+        import openai
+        from app.config import settings
+
+        client = openai.OpenAI(api_key=settings.openai_api_key)
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an English teacher creating diverse example sentences for vocabulary learning. Always create unique examples that help students understand word usage in different contexts."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            max_tokens=100,
+            temperature=0.7,  # Higher temperature for variation
+            top_p=0.9  # Add randomness
+        )
+
+        example_sentence = response.choices[0].message.content.strip()
+
+        # Clean up the response
+        if example_sentence.startswith('"'):
+            example_sentence = example_sentence.strip('"')
+        if example_sentence.startswith("'"):
+            example_sentence = example_sentence.strip("'")
+
+        # Ensure sentence ends with proper punctuation
+        if not example_sentence.endswith(('.', '!', '?')):
+            example_sentence += '.'
+
+        logger.info(f"Generated example for '{english_word}': {example_sentence}")
+        return example_sentence
+
+    except Exception as e:
+        logger.error(f"Error generating example for '{english_word}': {str(e)}")
+        # Fallback: create simple sentence with some variation
+        import random
+        fallbacks = [
+            f"I use {english_word} every day.",
+            f"The {english_word} is very important.",
+            f"We need a good {english_word} for this.",
+            f"This {english_word} works perfectly."
+        ]
+        return random.choice(fallbacks)
 
 
 # PARAMETERIZED ROUTES - these must come after specific routes
