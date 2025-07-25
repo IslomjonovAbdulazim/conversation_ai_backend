@@ -1,14 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Dict, Optional
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
 import logging
 import time
-import asyncio
-import random
 
 from app.database import get_db
 from app.models import User, Folder, Word, WordStats
@@ -267,88 +262,27 @@ async def bulk_delete_words(
         )
 
 
-# Add these imports to your main.py
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
-from fastapi import Request
-import time
-from typing import Dict, Optional
-
-# Add rate limiter to main.py
-logger = logging.getLogger(__name__)
-router = APIRouter()
-
-# Create limiter instance
-limiter = Limiter(key_func=get_remote_address)
-
-example_cache: Dict[str, Dict] = {}
-
-
-# Cache helper functions
-def get_cache_key(word: str, translation: str) -> str:
-    return f"{word.lower()}:{translation.lower()}"
-
-
-def get_cached_example(word: str, translation: str) -> Optional[str]:
-    """Get cached example if exists and not expired"""
-    cache_key = get_cache_key(word, translation)
-    cached = example_cache.get(cache_key)
-
-    if cached and time.time() - cached['timestamp'] < 3600:  # 1 hour cache
-        logger.info(f"Using cached example for '{word}'")
-        return cached['example']
-
-    return None
-
-
-def cache_example(word: str, translation: str, example: str):
-    """Cache the generated example"""
-    cache_key = get_cache_key(word, translation)
-    example_cache[cache_key] = {
-        'example': example,
-        'timestamp': time.time()
-    }
-
-    # Simple cache cleanup - keep only 1000 entries
-    if len(example_cache) > 1000:
-        # Remove oldest 200 entries
-        sorted_cache = sorted(example_cache.items(), key=lambda x: x[1]['timestamp'])
-        for key, _ in sorted_cache[:200]:
-            del example_cache[key]
-
-
-# Updated generate-example endpoint with rate limiting and caching
 @router.post("/generate-example", response_model=GenerateExampleResponse)
-@limiter.limit("20/minute")  # Rate limit: 20 requests per minute per IP
 async def generate_example(
-        request: Request,  # Required for rate limiting
-        example_request: GenerateExampleRequest,
+        request: GenerateExampleRequest,
         current_user: User = Depends(get_current_user),
         db: Session = Depends(get_db)
 ):
     """
-    Generate example sentence with rate limiting and caching
+    Generate example sentence for English word + Uzbek translation
+    Provides variation if word already exists with examples
     """
     try:
-        if not example_request.word or not example_request.translation:
+        if not request.word or not request.translation:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Both word and translation are required"
             )
 
-        word_clean = example_request.word.strip().lower()
-        translation_clean = example_request.translation.strip()
+        word_clean = request.word.strip().lower()
+        translation_clean = request.translation.strip()
 
-        # Check cache first
-        cached_example = get_cached_example(word_clean, translation_clean)
-        if cached_example:
-            return GenerateExampleResponse(
-                example_sentence=cached_example,
-                alternatives=[]
-            )
-
-        # Check existing examples for variation
+        # Check if this word already exists in user's folders
         existing_words = db.query(Word).join(Folder).filter(
             Folder.user_id == current_user.id,
             Word.word.ilike(word_clean)
@@ -356,38 +290,34 @@ async def generate_example(
 
         existing_examples = []
         if existing_words:
+            # Collect existing examples to avoid duplicates
             existing_examples = [
                 word.example_sentence for word in existing_words
                 if word.example_sentence and word.example_sentence.strip()
             ]
 
-        # Generate new example with retry logic
-        example_sentence = await generate_example_with_retry(
+            logger.info(f"Found {len(existing_examples)} existing examples for '{word_clean}'")
+
+        # Generate new example with variation
+        example_sentence = await generate_example_sentence_with_variation(
             word_clean,
             translation_clean,
-            existing_examples,
-            max_retries=3
+            existing_examples
         )
 
         if not example_sentence:
-            # Fallback to simple template
-            example_sentence = f"I need to use {word_clean} in my daily life."
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to generate example sentence"
+            )
 
-        # Cache the result
-        cache_example(word_clean, translation_clean, example_sentence)
-
-        logger.info(f"Generated example for word '{example_request.word}' by user {current_user.id}")
+        logger.info(f"Generated example for word '{request.word}' by user {current_user.id}")
 
         return GenerateExampleResponse(
             example_sentence=example_sentence,
-            alternatives=[]
+            alternatives=[]  # Keep empty as requested
         )
 
-    except RateLimitExceeded:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many requests. Please wait before generating more examples."
-        )
     except HTTPException:
         raise
     except Exception as e:
@@ -398,98 +328,94 @@ async def generate_example(
         )
 
 
-async def generate_example_with_retry(
+async def generate_example_sentence_with_variation(
         english_word: str,
         uzbek_translation: str,
-        existing_examples: List[str] = None,
-        max_retries: int = 3
+        existing_examples: List[str] = None
 ) -> str:
     """
-    Generate example with exponential backoff retry
+    Enhanced example generation with variation and duplicate prevention
     """
-    for attempt in range(max_retries):
-        try:
-            # Build variation prompt
-            existing_text = ""
-            if existing_examples:
-                existing_text = f"\n\nAvoid duplicating:\n" + "\n".join(f"- {ex}" for ex in existing_examples)
+    try:
+        # Build prompt with variation instructions
+        existing_text = ""
+        if existing_examples:
+            existing_text = f"\n\nAvoid duplicating these existing examples:\n" + "\n".join(
+                f"- {ex}" for ex in existing_examples)
 
-            # Randomize prompt style
-            import random
-            styles = [
-                "Create a simple example sentence",
-                "Make a practical example sentence",
-                "Write a clear example sentence",
-                "Generate an educational example sentence"
-            ]
+        # Add randomness to prompt style
+        import random
+        variation_prompts = [
+            "Create a simple, clear example sentence",
+            "Make a practical, everyday example sentence",
+            "Write a natural, conversational example sentence",
+            "Generate a clear, educational example sentence"
+        ]
 
-            prompt = f"""
-            {random.choice(styles)} using "{english_word}" (means "{uzbek_translation}").
+        base_prompt = random.choice(variation_prompts)
 
-            Requirements:
-            - Simple English for language learners
-            - Under 15 words
-            - Clear word meaning
-            - Unique from existing examples
-            {existing_text}
-            """
+        prompt = f"""
+        {base_prompt} using the English word "{english_word}" (which means "{uzbek_translation}" in Uzbek).
 
-            import openai
-            from app.config import settings
+        Requirements:
+        - Use everyday, simple English suitable for language learners
+        - Keep it under 15 words
+        - Make sure the meaning of "{english_word}" is clear from context
+        - Create a unique example different from any existing ones
+        {existing_text}
 
-            client = openai.OpenAI(api_key=settings.openai_api_key)
+        Example sentence:
+        """
 
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "Create diverse vocabulary examples for English learners."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                max_tokens=80,  # Reduced token usage
-                temperature=0.7,
-                timeout=10.0  # 10 second timeout
-            )
+        import openai
+        from app.config import settings
 
-            example = response.choices[0].message.content.strip()
+        client = openai.OpenAI(api_key=settings.openai_api_key)
 
-            # Clean response
-            if example.startswith('"'):
-                example = example.strip('"')
-            if not example.endswith(('.', '!', '?')):
-                example += '.'
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an English teacher creating diverse example sentences for vocabulary learning. Always create unique examples that help students understand word usage in different contexts."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            max_tokens=100,
+            temperature=0.7,  # Higher temperature for variation
+            top_p=0.9  # Add randomness
+        )
 
-            return example
+        example_sentence = response.choices[0].message.content.strip()
 
-        except openai.RateLimitError:
-            # If rate limited, wait longer
-            wait_time = (2 ** attempt) * 5  # 5, 10, 20 seconds
-            logger.warning(f"OpenAI rate limited, waiting {wait_time}s before retry {attempt + 1}")
-            await asyncio.sleep(wait_time)
+        # Clean up the response
+        if example_sentence.startswith('"'):
+            example_sentence = example_sentence.strip('"')
+        if example_sentence.startswith("'"):
+            example_sentence = example_sentence.strip("'")
 
-        except Exception as e:
-            if attempt == max_retries - 1:
-                logger.error(f"Final attempt failed: {str(e)}")
-                break
+        # Ensure sentence ends with proper punctuation
+        if not example_sentence.endswith(('.', '!', '?')):
+            example_sentence += '.'
 
-            wait_time = 2 ** attempt  # 1, 2, 4 seconds
-            await asyncio.sleep(wait_time)
+        logger.info(f"Generated example for '{english_word}': {example_sentence}")
+        return example_sentence
 
-    return None  # All retries failed
+    except Exception as e:
+        logger.error(f"Error generating example for '{english_word}': {str(e)}")
+        # Fallback: create simple sentence with some variation
+        import random
+        fallbacks = [
+            f"I use {english_word} every day.",
+            f"The {english_word} is very important.",
+            f"We need a good {english_word} for this.",
+            f"This {english_word} works perfectly."
+        ]
+        return random.choice(fallbacks)
 
-
-# Add cache cleanup endpoint for admin
-@router.delete("/generate-example/cache")
-async def clear_example_cache(current_user: User = Depends(get_current_user)):
-    """Clear the example cache (admin only)"""
-    global example_cache
-    example_cache.clear()
-    return {"message": "Cache cleared successfully"}
 
 # PARAMETERIZED ROUTES - these must come after specific routes
 
