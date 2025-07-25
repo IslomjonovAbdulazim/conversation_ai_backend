@@ -1,6 +1,6 @@
 import openai
 import logging
-from typing import Optional
+from typing import Optional, List  # Add List here
 
 from app.config import settings
 
@@ -56,6 +56,74 @@ class OpenAIService:
             logger.error(f"Error translating word '{english_word}': {str(e)}")
             # Fallback: return the original word if translation fails
             return english_word
+
+    # Add this function to app/services/openai_service.py
+
+    async def filter_best_vocabulary_words(self, word_list: List[str]) -> List[str]:
+        """
+        Use AI to select the best vocabulary words from extracted text
+        """
+        try:
+            if not word_list:
+                return []
+
+            # Join words for prompt
+            words_text = ", ".join(word_list)
+
+            prompt = f"""
+            From this list of words extracted from an image, select the 10-30 BEST vocabulary words for English learning.
+
+            Word list: {words_text}
+
+            Selection criteria:
+            - Choose words that are USEFUL for vocabulary building
+            - Skip very common words (a, the, and, etc.)
+            - Skip proper nouns, numbers, and abbreviations  
+            - Prefer words that are:
+              * Concrete nouns (computer, kitchen, business)
+              * Useful verbs (develop, manage, create)
+              * Important adjectives (efficient, professional, modern)
+              * Academic/professional terms
+            - Skip: articles, prepositions, pronouns, very basic words
+            - Return 10-30 words maximum, prioritize quality over quantity
+
+            Return ONLY the selected words, comma-separated, no explanations:
+            """
+
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an expert English vocabulary teacher. Select only the most valuable words for language learning from any given list."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                max_tokens=200,
+                temperature=0.3
+            )
+
+            filtered_response = response.choices[0].message.content.strip()
+
+            # Parse response into list
+            if filtered_response:
+                filtered_words = [word.strip().lower() for word in filtered_response.split(",")]
+                # Remove any empty strings and ensure uniqueness
+                filtered_words = list(set([word for word in filtered_words if word and len(word) >= 3]))
+
+                logger.info(
+                    f"AI filtered {len(word_list)} words down to {len(filtered_words)} quality vocabulary words")
+                return filtered_words[:30]  # Hard limit of 30
+
+            return []
+
+        except Exception as e:
+            logger.error(f"Error filtering vocabulary words: {str(e)}")
+            # Fallback: return first 20 words if AI filtering fails
+            return word_list[:20]
 
     async def generate_example_sentence(self, english_word: str, uzbek_translation: str) -> str:
         """

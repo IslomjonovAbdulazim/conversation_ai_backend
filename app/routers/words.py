@@ -130,6 +130,7 @@ def create_word_stats(word_id: int, user_id: int, db: Session):
 
 
 # SPECIFIC ROUTES FIRST - these must come before parameterized routes
+# Update the upload_photo_ocr function in app/routers/words.py
 
 @router.post("/upload-photo", response_model=OCRResponse)
 async def upload_photo_ocr(
@@ -137,57 +138,78 @@ async def upload_photo_ocr(
         current_user: User = Depends(get_current_user)
 ):
     """
-    Extract text from image using Google Vision API
+    Extract text from image using Google Vision API + AI word filtering
     """
     try:
         start_time = time.time()
 
-        # Validate file
-        if not file.content_type.startswith('image/'):
+        # Validate file type
+        allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/heic', 'image/heif']
+        if file.content_type not in allowed_types:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="File must be an image"
+                detail=f"Unsupported file type: {file.content_type}. Allowed: {', '.join(allowed_types)}"
             )
 
-        # Read file content
-        file_content = await file.read()
+        # Check file size (max 10MB)
+        file.seek(0, 2)  # Seek to end
+        file_size = file.tell()
+        file.seek(0)  # Reset to beginning
 
-        # Extract text using Google Vision
-        extracted_text = extract_text_from_image(file_content)
+        if file_size > 10 * 1024 * 1024:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File too large. Maximum size is 10MB"
+            )
 
-        if not extracted_text:
+        # Step 1: Extract ALL words using Google Vision
+        all_words = await extract_text_from_image(file)
+
+        if not all_words:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="No text found in image"
             )
 
-        # Split into words and translate
-        words = [word.strip() for word in extracted_text.split() if len(word.strip()) > 2]
+        logger.info(f"Google Vision extracted {len(all_words)} raw words")
 
-        if not words:
+        # Step 2: Use AI to filter best vocabulary words
+        from app.services.openai_service import openai_service
+        filtered_words = await openai_service.filter_best_vocabulary_words(all_words)
+
+        if not filtered_words:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No valid words found in image"
+                detail="No suitable vocabulary words found in image"
             )
 
-        # Translate words to Uzbek
+        logger.info(f"AI filtered down to {len(filtered_words)} quality words")
+
+        # Step 3: Translate only the filtered words
         translated_words = []
-        for word in words[:20]:  # Limit to 20 words
+        for word in filtered_words:
             try:
                 translation = await translate_to_uzbek(word)
-                if translation:
+                if translation and translation != word:  # Skip if translation failed
                     translated_words.append(ExtractedWord(
                         word=word.lower(),
                         translation=translation,
-                        confidence=0.8  # Could be improved with actual confidence scores
+                        confidence=0.9  # High confidence for AI-filtered words
                     ))
             except Exception as e:
                 logger.warning(f"Failed to translate word '{word}': {str(e)}")
                 continue
 
+        if not translated_words:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No words could be translated successfully"
+            )
+
         processing_time = round(time.time() - start_time, 2)
 
-        logger.info(f"OCR processed {len(translated_words)} words in {processing_time}s for user {current_user.id}")
+        logger.info(
+            f"OCR completed: {len(translated_words)} final words in {processing_time}s for user {current_user.id}")
 
         return OCRResponse(
             extracted_words=translated_words,
@@ -203,7 +225,6 @@ async def upload_photo_ocr(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to process image"
         )
-
 
 @router.post("/bulk-delete", response_model=BulkDeleteResponse)
 async def bulk_delete_words(
