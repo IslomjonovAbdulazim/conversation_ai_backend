@@ -204,6 +204,50 @@ class OpenAIService:
             # Fallback: create simple sentence
             return f"I use {english_word} every day."
 
+    async def generate_quiz_question(self, words: list, quiz_type: str):
+        """
+        Generate quiz questions for different quiz types
+        (Used by quiz router)
+        """
+        try:
+            if quiz_type == "reading":
+                # Generate reading comprehension passage
+                prompt = f"""
+                Create a short reading passage (3-4 sentences) using these words: {', '.join([w['word'] for w in words[:8]])}.
+
+                Replace some of the words with blanks like this: _____.
+                Make the passage natural and interesting.
+                Return the passage and the correct answers.
+
+                Format:
+                PASSAGE: [passage with blanks]
+                ANSWERS: [list of correct words for each blank]
+                """
+
+                response = self.client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You are creating reading comprehension exercises for English language learners."
+                        },
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ],
+                    max_tokens=300,
+                    temperature=0.5
+                )
+
+                return response.choices[0].message.content.strip()
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Error generating quiz question: {str(e)}")
+            return None
+
 
 # Create service instance
 openai_service = OpenAIService()
@@ -218,3 +262,8 @@ async def translate_to_uzbek(english_word: str) -> str:
 async def generate_example_sentence(english_word: str, uzbek_translation: str) -> str:
     """Main function to generate example sentence"""
     return await openai_service.generate_example_sentence(english_word, uzbek_translation)
+
+
+async def generate_quiz_question(words: list, quiz_type: str):
+    """Main function to generate quiz questions"""
+    return await openai_service.generate_quiz_question(words, quiz_type)
