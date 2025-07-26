@@ -34,11 +34,6 @@ class Settings(BaseSettings):
 # Load settings
 settings = Settings()
 
-# Validate Apple private key exists
+# Validate Apple private key exists (only warn, don't fail)
 if not os.path.exists(settings.apple_private_key_path):
     print(f"Warning: Apple private key not found at {settings.apple_private_key_path}")
-
-# Set Google Vision API key as environment variable (required by Google client)
-if settings.google_vision_api_key:
-    os.environ['GOOGLE_APPLICATION_CREDENTIALS_JSON'] = f'{{"type": "service_account", "private_key": "dummy", "client_email": "dummy@example.com", "project_id": "dummy"}}'
-    os.environ['GOOGLE_VISION_API_KEY'] = settings.google_vision_api_key
