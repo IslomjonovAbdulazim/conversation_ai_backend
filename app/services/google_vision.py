@@ -1,4 +1,4 @@
-# app/services/google_vision.py - OPTIMIZED WITH AI WORD FILTERING
+# app/services/google_vision.py - Optimized and simplified
 import re
 import base64
 import logging
@@ -6,7 +6,7 @@ from typing import List
 from PIL import Image
 import io
 import requests
-from fastapi import UploadFile, HTTPException, status
+from fastapi import HTTPException, status
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -14,16 +14,11 @@ logger = logging.getLogger(__name__)
 
 class GoogleVisionService:
     def __init__(self):
-        self.client = None
-        # Minimal stop words - let AI do the smart filtering
+        # Basic stop words to filter out (minimal list)
         self.basic_stop_words = {
             'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 'was', 'one', 'our',
             'out', 'day', 'get', 'has', 'him', 'his', 'how', 'man', 'new', 'now', 'old', 'see', 'two', 'way',
-            'who', 'boy', 'did', 'its', 'let', 'put', 'say', 'she', 'too', 'use', 'will', 'with', 'have',
-            'this', 'that', 'they', 'from', 'been', 'into', 'what', 'were', 'said', 'each', 'which', 'their',
-            'time', 'would', 'there', 'could', 'other', 'after', 'first', 'well', 'very', 'when', 'much',
-            'before', 'here', 'through', 'just', 'think', 'where', 'also', 'good', 'come', 'work', 'take',
-            'make', 'know', 'back', 'help', 'give', 'tell', 'does', 'even', 'right', 'same'
+            'who', 'boy', 'did', 'its', 'let', 'put', 'say', 'she', 'too', 'use'
         }
 
     def convert_heic_to_jpeg(self, image_content: bytes) -> bytes:
@@ -75,7 +70,7 @@ class GoogleVisionService:
             return image_content
 
     async def call_vision_api_with_key(self, image_content: bytes):
-        """Call Google Vision API directly using API key with improved error handling"""
+        """Call Google Vision API directly using API key"""
         try:
             # Convert and resize image if needed
             processed_image = self.convert_heic_to_jpeg(image_content)
@@ -130,7 +125,7 @@ class GoogleVisionService:
                         unique_words.append(word_lower)
                         seen.add(word_lower)
 
-            logger.info(f"Extracted {len(unique_words)} raw words from vision")
+            logger.info(f"Extracted {len(unique_words)} unique words from vision")
             return unique_words
 
         except Exception as e:
@@ -139,7 +134,7 @@ class GoogleVisionService:
 
     async def extract_text_from_content(self, image_content: bytes) -> List[str]:
         """
-        Extract text from image content (bytes) and return ALL meaningful words (for AI filtering)
+        Extract text from image content (bytes) and return ALL meaningful words
         """
         try:
             # Call Google Vision API
@@ -166,10 +161,10 @@ class GoogleVisionService:
             # First annotation contains all detected text
             full_text = text_annotations[0].get("description", "")
 
-            # Extract ALL meaningful words - let AI do the smart filtering
+            # Extract ALL meaningful words
             all_words = self.extract_all_words(full_text)
 
-            logger.info(f"Extracted {len(all_words)} words for AI filtering")
+            logger.info(f"Extracted {len(all_words)} words from image")
             return all_words
 
         except HTTPException:
@@ -181,58 +176,6 @@ class GoogleVisionService:
                 detail=f"Image processing failed: {str(e)}"
             )
 
-    async def extract_text_from_image(self, image_file: UploadFile) -> List[str]:
-        """
-        Extract text from image and return ALL meaningful words (for AI filtering)
-        """
-        try:
-            # Read image content
-            content = await image_file.read()
-
-            # Call Google Vision API
-            response_data = await self.call_vision_api_with_key(content)
-
-            # Check for errors
-            if "error" in response_data:
-                logger.error(f"Google Vision API error: {response_data['error']}")
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Vision API error: {response_data['error']}"
-                )
-
-            responses = response_data.get("responses", [])
-            if not responses:
-                logger.info("No response from Google Vision API")
-                return []
-
-            text_annotations = responses[0].get("textAnnotations", [])
-            if not text_annotations:
-                logger.info("No text detected in image")
-                return []
-
-            # First annotation contains all detected text
-            full_text = text_annotations[0].get("description", "")
-
-            # Extract ALL meaningful words - let AI do the smart filtering
-            all_words = self.extract_all_words(full_text)
-
-            logger.info(f"Extracted {len(all_words)} words for AI filtering")
-            return all_words
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Error extracting text from image: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Image processing failed: {str(e)}"
-            )
-
 
 # Create service instance
 google_vision_service = GoogleVisionService()
-
-
-async def extract_text_from_image(image_file: UploadFile) -> List[str]:
-    """Main function to extract text from image"""
-    return await google_vision_service.extract_text_from_image(image_file)
