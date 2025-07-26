@@ -434,20 +434,6 @@ def get_folder_or_404(folder_id: int, user_id: int, db: Session):
     return folder
 
 
-def create_word_stats(word_id: int, user_id: int, db: Session):
-    """Create initial word stats for user"""
-    word_stats = WordStats(
-        word_id=word_id,
-        user_id=user_id,
-        category="not_known",
-        last_5_results=[],
-        total_attempts=0,
-        correct_attempts=0
-    )
-    db.add(word_stats)
-    return word_stats
-
-
 # Update the upload_photo_ocr function in app/routers/words.py
 
 @router.post("/upload-photo", response_model=OCRResponse)
