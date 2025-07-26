@@ -79,6 +79,43 @@ class DeleteWordResponse(BaseModel):
     deleted_word: dict
 
 
+# Debug endpoint - remove after testing
+@router.post("/translate-debug")
+async def translate_debug(
+        request: TranslateWordRequest,
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db)
+):
+    """Debug endpoint to test enhanced translation"""
+    try:
+        word_clean = request.word.strip().lower()
+
+        # Test the enhanced function directly
+        logger.info(f"DEBUG: Testing enhanced translation for '{word_clean}'")
+
+        try:
+            translation_options = await openai_service.get_multiple_translation_options(word_clean)
+            return {
+                "status": "success",
+                "word": word_clean,
+                "raw_options": translation_options,
+                "options_count": len(translation_options) if translation_options else 0
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "word": word_clean,
+                "error": str(e),
+                "error_type": type(e).__name__
+            }
+
+    except Exception as e:
+        return {
+            "status": "endpoint_error",
+            "error": str(e)
+        }
+
+
 class TranslateWordRequest(BaseModel):
     word: str
 
@@ -86,6 +123,8 @@ class TranslateWordRequest(BaseModel):
 class TranslationOption(BaseModel):
     translation: str
     confidence: float
+    part_of_speech: Optional[str] = None
+    meaning: Optional[str] = None
 
 
 class TranslateWordResponse(BaseModel):
@@ -133,7 +172,7 @@ async def translate_word(
         current_user: User = Depends(get_current_user),
         db: Session = Depends(get_db)
 ):
-    """Translate a single English word to Uzbek"""
+    """Translate a single English word to Uzbek with multiple options"""
     try:
         if not request.word or len(request.word.strip()) == 0:
             raise HTTPException(
@@ -142,26 +181,59 @@ async def translate_word(
             )
 
         word_clean = request.word.strip().lower()
-        translation = await openai_service.translate_to_uzbek(word_clean)
 
-        logger.info(f"Translated '{word_clean}' to '{translation}' for user {current_user.id}")
+        # Try to get multiple translation options first
+        try:
+            logger.info(f"Attempting enhanced translation for '{word_clean}'")
+            translation_options = await openai_service.get_multiple_translation_options(word_clean)
 
-        # Return in the format expected by Flutter app
+            if translation_options and len(translation_options) > 0:
+                # Convert to response format
+                options = []
+                for option in translation_options:
+                    options.append(TranslationOption(
+                        translation=option.get("translation", ""),
+                        confidence=option.get("confidence", 0.8),
+                        part_of_speech=option.get("part_of_speech", ""),
+                        meaning=option.get("meaning", "")
+                    ))
+
+                logger.info(f"Enhanced translation successful: {len(options)} options for '{word_clean}'")
+
+                return TranslateWordResponse(
+                    word=word_clean,
+                    options=options,
+                    total_options=len(options)
+                )
+            else:
+                logger.warning(f"Enhanced translation returned empty for '{word_clean}', falling back")
+
+        except Exception as e:
+            logger.error(f"Enhanced translation failed for '{word_clean}': {str(e)}, falling back to simple")
+
+        # Fallback to simple translation
+        logger.info(f"Using simple translation fallback for '{word_clean}'")
+        simple_translation = await openai_service.translate_to_uzbek(word_clean)
+
+        options = [TranslationOption(
+            translation=simple_translation,
+            confidence=0.9,
+            part_of_speech="unknown",
+            meaning="standard translation"
+        )]
+
+        logger.info(f"Simple translation completed for '{word_clean}': {simple_translation}")
+
         return TranslateWordResponse(
             word=word_clean,
-            options=[
-                TranslationOption(
-                    translation=translation,
-                    confidence=0.9
-                )
-            ],
-            total_options=1
+            options=options,
+            total_options=len(options)
         )
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error translating word '{request.word}': {str(e)}")
+        logger.error(f"Translation endpoint failed for '{request.word}': {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to translate word"
