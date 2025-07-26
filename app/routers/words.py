@@ -478,6 +478,7 @@ async def upload_photo_ocr(
                 detail="No suitable vocabulary words found in image"
             )
 
+
         logger.info(f"AI filtered down to {len(filtered_words)} quality words")
         from app.services.openai_service import openai_service
         translations = await openai_service.batch_translate_to_uzbek(filtered_words)
