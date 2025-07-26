@@ -50,6 +50,7 @@ class AppleAuthService:
                 logger.error("No matching public key found for Apple token")
                 return None
 
+
             # Verify and decode the token
             payload = jwt.decode(
                 identity_token,
