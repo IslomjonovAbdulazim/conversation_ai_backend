@@ -151,22 +151,33 @@ class OpenAIService:
         """
         try:
             prompt = f"""
-            Provide multiple Uzbek translation options for the English word "{english_word}".
+            I need MULTIPLE Uzbek translations for the English word "{english_word}". Be creative and think of ALL possible ways this word can be used!
 
-            Consider ALL possible meanings and parts of speech:
-            - If it's a noun, provide the noun translation
-            - If it can be a verb, provide the verb translation
-            - If it has multiple meanings, provide different context translations
-            - Include common phrases or expressions if relevant
+            Consider these examples of how words can have multiple meanings:
+            - "book": kitob (noun), band qilmoq (reserve), buyurtma bermoq (order), ro'yxatga olmoq (register)
+            - "run": yugurmoq (jog), boshqarmoq (manage), ishlash (operate), qochmoq (flee)
+            - "light": yorug'lik (illumination), yengil (not heavy), yoqmoq (turn on), och (pale color)
+            - "play": o'ynamoq (game), ijro etmoq (music), spektakl (theater), rol o'ynamoq (act)
 
-            Format your response as a JSON array with this structure:
+            For "{english_word}", think about:
+            ✓ Different parts of speech (noun, verb, adjective, adverb)
+            ✓ Multiple meanings within the same part of speech
+            ✓ Common phrases and expressions
+            ✓ Formal vs informal usage
+            ✓ Technical vs everyday meanings
+            ✓ Regional variations if any
+
+            IMPORTANT: I want AT LEAST 3-5 different options. Don't be conservative - explore ALL possible meanings!
+
+            Format as JSON array:
             [
-                {{"translation": "kitob", "part_of_speech": "noun", "meaning": "a written work", "confidence": 0.95}},
-                {{"translation": "band qilmoq", "part_of_speech": "verb", "meaning": "to reserve/make appointment", "confidence": 0.90}},
-                {{"translation": "buyurtma bermoq", "part_of_speech": "verb", "meaning": "to order/book something", "confidence": 0.85}}
+                {{"translation": "option1", "part_of_speech": "noun", "meaning": "explanation", "confidence": 0.95}},
+                {{"translation": "option2", "part_of_speech": "verb", "meaning": "explanation", "confidence": 0.90}},
+                {{"translation": "option3", "part_of_speech": "verb", "meaning": "different context", "confidence": 0.85}},
+                {{"translation": "option4", "part_of_speech": "adjective", "meaning": "another meaning", "confidence": 0.80}}
             ]
 
-            Provide 2-5 options when possible. Return only the JSON array, no other text.
+            Give me as many relevant options as possible! Return only the JSON array.
             """
 
             response = self.client.chat.completions.create(
@@ -174,15 +185,15 @@ class OpenAIService:
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are an expert English-Uzbek translator who provides comprehensive translation options considering all meanings and parts of speech. Return only valid JSON."
+                        "content": "You are a creative English-Uzbek translator who loves exploring ALL possible meanings and translations of words. Your goal is to provide comprehensive, diverse translation options. Never give just one option - always explore multiple meanings, parts of speech, and contexts. Be generous with options!"
                     },
                     {
                         "role": "user",
                         "content": prompt
                     }
                 ],
-                max_tokens=500,
-                temperature=0.3
+                max_tokens=800,  # Increased for more options
+                temperature=0.7  # Higher temperature for more creativity
             )
 
             # Parse JSON response
@@ -210,28 +221,128 @@ class OpenAIService:
                     if cleaned_option["translation"]:
                         cleaned_options.append(cleaned_option)
 
+            # If we got fewer than 2 options, try to get more with a follow-up
+            if len(cleaned_options) < 2:
+                logger.warning(f"Only got {len(cleaned_options)} options for '{english_word}', trying to get more")
+                additional_options = await self._get_additional_translations(english_word, cleaned_options)
+                cleaned_options.extend(additional_options)
+
             logger.info(f"Generated {len(cleaned_options)} translation options for '{english_word}'")
             return cleaned_options
 
         except json.JSONDecodeError as e:
             logger.error(f"JSON parsing error for translation options: {str(e)}")
-            # Fallback to simple translation
-            simple_translation = await self.translate_to_uzbek(english_word)
-            return [{
-                "translation": simple_translation,
-                "confidence": 0.8,
-                "part_of_speech": "unknown",
-                "meaning": "standard translation"
-            }]
+            # Try a simpler approach
+            return await self._get_fallback_translations(english_word)
         except Exception as e:
             logger.error(f"Error getting translation options for '{english_word}': {str(e)}")
-            # Fallback to simple translation
-            simple_translation = await self.translate_to_uzbek(english_word)
-            return [{
-                "translation": simple_translation,
-                "confidence": 0.7,
+            return await self._get_fallback_translations(english_word)
+
+    async def _get_additional_translations(self, english_word: str, existing_options: List[dict]) -> List[dict]:
+        """Get additional translations if the first attempt didn't provide enough"""
+        try:
+            existing_translations = [opt["translation"] for opt in existing_options]
+            existing_text = ", ".join(existing_translations) if existing_translations else "none"
+
+            prompt = f"""
+            I already have these translations for "{english_word}": {existing_text}
+
+            Give me MORE different Uzbek translations for "{english_word}". Think of:
+            - Synonyms and alternative words
+            - Different contexts and situations
+            - Formal vs colloquial usage
+            - Technical or specialized meanings
+            - Related expressions or phrases
+
+            Return 2-4 additional options as JSON array:
+            [{{"translation": "new_option1", "part_of_speech": "type", "meaning": "context", "confidence": 0.8}}]
+            """
+
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "Creative translator providing diverse translation alternatives."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=400,
+                temperature=0.8
+            )
+
+            import json
+            response_text = response.choices[0].message.content.strip()
+            if response_text.startswith("```json"):
+                response_text = response_text.replace("```json", "").replace("```", "").strip()
+            elif response_text.startswith("```"):
+                response_text = response_text.replace("```", "").strip()
+
+            additional_options = json.loads(response_text)
+
+            cleaned_additional = []
+            for option in additional_options:
+                if isinstance(option, dict) and "translation" in option:
+                    translation = option.get("translation", "").strip()
+                    if translation and translation not in existing_translations:
+                        cleaned_additional.append({
+                            "translation": translation,
+                            "confidence": float(option.get("confidence", 0.75)),
+                            "part_of_speech": option.get("part_of_speech", "").strip(),
+                            "meaning": option.get("meaning", "").strip()
+                        })
+
+            return cleaned_additional
+
+        except Exception as e:
+            logger.error(f"Error getting additional translations: {str(e)}")
+            return []
+
+    async def _get_fallback_translations(self, english_word: str) -> List[dict]:
+        """Fallback method using simpler prompts"""
+        try:
+            # Get basic translation first
+            basic_translation = await self.translate_to_uzbek(english_word)
+
+            options = [{
+                "translation": basic_translation,
+                "confidence": 0.8,
                 "part_of_speech": "unknown",
-                "meaning": "fallback translation"
+                "meaning": "primary translation"
+            }]
+
+            # Try to get one more alternative
+            try:
+                prompt = f"Give me an alternative Uzbek translation for '{english_word}' that's different from '{basic_translation}'. Just return the single word or phrase."
+
+                response = self.client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "Translator providing alternative translations."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    max_tokens=50,
+                    temperature=0.5
+                )
+
+                alternative = response.choices[0].message.content.strip()
+                if alternative and alternative != basic_translation:
+                    options.append({
+                        "translation": alternative,
+                        "confidence": 0.7,
+                        "part_of_speech": "alternative",
+                        "meaning": "alternative translation"
+                    })
+
+            except Exception:
+                pass  # If alternative fails, just return the basic one
+
+            return options
+
+        except Exception as e:
+            logger.error(f"Fallback translation failed: {str(e)}")
+            return [{
+                "translation": english_word,
+                "confidence": 0.5,
+                "part_of_speech": "unknown",
+                "meaning": "translation failed"
             }]
 
     async def generate_example_sentence(self, english_word: str, uzbek_translation: str) -> str:
