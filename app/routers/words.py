@@ -111,7 +111,6 @@ class TranslateWordRequest(BaseModel):
 class TranslationOption(BaseModel):
     translation: str
     confidence: float
-    context: Optional[str] = None
 
 
 class TranslateWordResponse(BaseModel):
@@ -286,14 +285,10 @@ async def get_translation_options(english_word: str) -> List[TranslationOption]:
         prompt = f"""
         Provide 3-4 different translation options for the English word "{english_word}" into Uzbek.
 
-        For each translation option, provide:
-        1. The translation (plain text, no formatting)
-        2. A brief context or usage note (when this translation is preferred)
-
-        Format your response as a numbered list:
-        1. [translation] - [context/usage note]
-        2. [translation] - [context/usage note]
-        3. [translation] - [context/usage note]
+        Format your response as a numbered list of just the translations:
+        1. [translation]
+        2. [translation]
+        3. [translation]
 
         Make sure translations are accurate and commonly used. Use plain text only, no bold or other formatting.
         """
@@ -324,8 +319,7 @@ async def get_translation_options(english_word: str) -> List[TranslationOption]:
             single_translation = await translate_to_uzbek(english_word)
             options = [TranslationOption(
                 translation=single_translation,
-                confidence=0.9,
-                context="Primary translation"
+                confidence=0.9
             )]
 
         return options
@@ -337,14 +331,12 @@ async def get_translation_options(english_word: str) -> List[TranslationOption]:
             single_translation = await translate_to_uzbek(english_word)
             return [TranslationOption(
                 translation=single_translation,
-                confidence=0.8,
-                context="Standard translation"
+                confidence=0.8
             )]
         except:
             return [TranslationOption(
                 translation=english_word,
-                confidence=0.1,
-                context="Translation unavailable"
+                confidence=0.1
             )]
 
 
