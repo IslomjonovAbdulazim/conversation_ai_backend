@@ -78,6 +78,8 @@ class DeleteWordResponse(BaseModel):
     message: str
     deleted_word: dict
 
+class TranslateWordRequest(BaseModel):
+    word: str
 
 # Debug endpoint - remove after testing
 @router.post("/translate-debug")
@@ -125,6 +127,10 @@ class TranslationOption(BaseModel):
     confidence: float
     part_of_speech: Optional[str] = None
     meaning: Optional[str] = None
+
+
+class TranslateWordRequest(BaseModel):
+    word: str
 
 
 class TranslateWordResponse(BaseModel):
