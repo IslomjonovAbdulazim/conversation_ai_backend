@@ -186,7 +186,6 @@ async def get_folder_details(
                 "added_at": word.added_at.isoformat(),
                 "stats": {
                     "category": word_stats.category if word_stats else "not_known",
-                    "last_5_results": word_stats.last_5_results if word_stats else [],
                     "accuracy": word_stats.accuracy if word_stats else 0
                 }
             }

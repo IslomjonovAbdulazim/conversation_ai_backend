@@ -971,7 +971,6 @@ async def get_word_details(
                 "total_attempts": word_stats.total_attempts if word_stats else 0,
                 "correct_attempts": word_stats.correct_attempts if word_stats else 0,
                 "accuracy": word_stats.accuracy if word_stats else 0,
-                "last_quiz_date": None  # Could track this in future
             }
         )
 
