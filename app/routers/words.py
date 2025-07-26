@@ -127,6 +127,7 @@ class SaveTranslationResponse(BaseModel):
     saved_word: WordResponse
     stats: Dict
 
+
 def get_folder_or_404(folder_id: int, user_id: int, db: Session):
     """Helper function to get folder or raise 404"""
     folder = db.query(Folder).filter(
@@ -807,6 +808,8 @@ async def delete_word(
             detail="Failed to delete word"
         )
 
+
+# Add these new endpoint functions to your words router
 
 @router.post("/translate", response_model=TranslateWordResponse)
 async def translate_word(
