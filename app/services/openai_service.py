@@ -1,4 +1,4 @@
-# app/services/openai_service.py - Simplified and optimized
+# app/services/openai_service.py - Enhanced with multiple translation options
 import openai
 import logging
 import asyncio
@@ -145,7 +145,153 @@ class OpenAIService:
             logger.error(f"Error in translation chunk: {str(e)}")
             return {}
 
+    async def get_multiple_translation_options(self, english_word: str) -> List[dict]:
+        """
+        Get multiple translation options considering different parts of speech and meanings
+        """
+        try:
+            prompt = f"""
+            Provide multiple Uzbek translation options for the English word "{english_word}".
+
+            Consider ALL possible meanings and parts of speech:
+            - If it's a noun, provide the noun translation
+            - If it can be a verb, provide the verb translation
+            - If it has multiple meanings, provide different context translations
+            - Include common phrases or expressions if relevant
+
+            Format your response as a JSON array with this structure:
+            [
+                {{"translation": "kitob", "part_of_speech": "noun", "meaning": "a written work", "confidence": 0.95}},
+                {{"translation": "band qilmoq", "part_of_speech": "verb", "meaning": "to reserve/make appointment", "confidence": 0.90}},
+                {{"translation": "buyurtma bermoq", "part_of_speech": "verb", "meaning": "to order/book something", "confidence": 0.85}}
+            ]
+
+            Provide 2-5 options when possible. Return only the JSON array, no other text.
+            """
+
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an expert English-Uzbek translator who provides comprehensive translation options considering all meanings and parts of speech. Return only valid JSON."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                max_tokens=500,
+                temperature=0.3
+            )
+
+            # Parse JSON response
+            import json
+            response_text = response.choices[0].message.content.strip()
+
+            # Clean response (remove markdown formatting if present)
+            if response_text.startswith("```json"):
+                response_text = response_text.replace("```json", "").replace("```", "").strip()
+            elif response_text.startswith("```"):
+                response_text = response_text.replace("```", "").strip()
+
+            translation_options = json.loads(response_text)
+
+            # Validate and clean the options
+            cleaned_options = []
+            for option in translation_options:
+                if isinstance(option, dict) and "translation" in option:
+                    cleaned_option = {
+                        "translation": option.get("translation", "").strip(),
+                        "confidence": float(option.get("confidence", 0.8)),
+                        "part_of_speech": option.get("part_of_speech", "").strip(),
+                        "meaning": option.get("meaning", "").strip()
+                    }
+                    if cleaned_option["translation"]:
+                        cleaned_options.append(cleaned_option)
+
+            logger.info(f"Generated {len(cleaned_options)} translation options for '{english_word}'")
+            return cleaned_options
+
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parsing error for translation options: {str(e)}")
+            # Fallback to simple translation
+            simple_translation = await self.translate_to_uzbek(english_word)
+            return [{
+                "translation": simple_translation,
+                "confidence": 0.8,
+                "part_of_speech": "unknown",
+                "meaning": "standard translation"
+            }]
+        except Exception as e:
+            logger.error(f"Error getting translation options for '{english_word}': {str(e)}")
+            # Fallback to simple translation
+            simple_translation = await self.translate_to_uzbek(english_word)
+            return [{
+                "translation": simple_translation,
+                "confidence": 0.7,
+                "part_of_speech": "unknown",
+                "meaning": "fallback translation"
+            }]
+
     async def generate_example_sentence(self, english_word: str, uzbek_translation: str) -> str:
+        """
+        Generate example sentence for English word
+        """
+        try:
+            prompt = f"""
+            Create a simple, clear example sentence using the English word "{english_word}" (which means "{uzbek_translation}" in Uzbek).
+
+            Requirements:
+            - Use everyday, simple English
+            - Make the sentence practical and useful for language learners
+            - Keep it under 15 words
+            - Make sure the meaning of "{english_word}" is clear from context
+
+            Example sentence:
+            """
+
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an English teacher creating example sentences for vocabulary learning. Make sentences simple, clear, and practical for everyday use."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                max_tokens=100,
+                temperature=0.3
+            )
+
+            example_sentence = response.choices[0].message.content.strip()
+
+            # Clean up the response
+            if example_sentence.startswith('"'):
+                example_sentence = example_sentence.strip('"')
+            if example_sentence.startswith("'"):
+                example_sentence = example_sentence.strip("'")
+
+            # Remove any prefixes
+            prefixes = ["example sentence:", "example:", "sentence:", "here's an example:"]
+            for prefix in prefixes:
+                if example_sentence.lower().startswith(prefix):
+                    example_sentence = example_sentence[len(prefix):].strip()
+
+            # Ensure sentence ends with proper punctuation
+            if not example_sentence.endswith(('.', '!', '?')):
+                example_sentence += '.'
+
+            logger.info(f"Generated example for '{english_word}': {example_sentence}")
+            return example_sentence
+
+        except Exception as e:
+            logger.error(f"Error generating example for '{english_word}': {str(e)}")
+            # Fallback: create simple sentence
+            return f"I use {english_word} every day."
         """
         Generate example sentence for English word
         """
@@ -267,3 +413,8 @@ async def generate_example_sentence(english_word: str, uzbek_translation: str) -
 async def generate_quiz_question(words: list, quiz_type: str):
     """Main function to generate quiz questions"""
     return await openai_service.generate_quiz_question(words, quiz_type)
+
+
+async def get_multiple_translation_options(english_word: str) -> List[dict]:
+    """Main function to get multiple translation options"""
+    return await openai_service.get_multiple_translation_options(english_word)
