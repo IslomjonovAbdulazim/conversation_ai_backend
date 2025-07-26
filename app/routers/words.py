@@ -83,9 +83,15 @@ class TranslateWordRequest(BaseModel):
     word: str
 
 
+class TranslationOption(BaseModel):
+    translation: str
+    confidence: float
+
+
 class TranslateWordResponse(BaseModel):
     word: str
-    translation: str
+    options: List[TranslationOption]
+    total_options: int
 
 
 # Helper functions
@@ -111,6 +117,7 @@ def create_word_stats(word_id: int, user_id: int, db: Session) -> WordStats:
         word_id=word_id,
         user_id=user_id,
         category="not_known",
+        last_5_results="",
         total_attempts=0,
         correct_attempts=0
     )
@@ -139,9 +146,16 @@ async def translate_word(
 
         logger.info(f"Translated '{word_clean}' to '{translation}' for user {current_user.id}")
 
+        # Return in the format expected by Flutter app
         return TranslateWordResponse(
             word=word_clean,
-            translation=translation
+            options=[
+                TranslationOption(
+                    translation=translation,
+                    confidence=0.9
+                )
+            ],
+            total_options=1
         )
 
     except HTTPException:
@@ -413,6 +427,7 @@ async def get_word_details(
             },
             stats={
                 "category": word_stats.category if word_stats else "not_known",
+                "last_5_results": word_stats.last_5_results if word_stats else [],
                 "total_attempts": word_stats.total_attempts if word_stats else 0,
                 "correct_attempts": word_stats.correct_attempts if word_stats else 0,
                 "accuracy": (
