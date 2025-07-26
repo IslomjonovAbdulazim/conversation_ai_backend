@@ -57,6 +57,56 @@ class OpenAIService:
             # Fallback: return the original word if translation fails
             return english_word
 
+    async def batch_translate_to_uzbek(self, english_words: List[str]) -> Dict[str, str]:
+        """
+        Translate multiple English words to Uzbek in a single API call
+        """
+        try:
+            if not english_words:
+                return {}
+
+            # Join words for batch translation
+            words_list = ", ".join(english_words)
+
+            prompt = f"""
+            Translate these English words to Uzbek. Return as JSON format: {{"word": "translation"}}
+
+            English words: {words_list}
+
+            Provide translations in this exact JSON format:
+            {{
+                "word1": "translation1",
+                "word2": "translation2"
+            }}
+            """
+
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a professional English-Uzbek translator. Return only valid JSON."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                max_tokens=500,
+                temperature=0.1
+            )
+
+            # Parse JSON response
+            import json
+            translations = json.loads(response.choices[0].message.content.strip())
+
+            logger.info(f"Batch translated {len(translations)} words")
+            return translations
+
+        except Exception as e:
+            logger.error(f"Error in batch translation: {str(e)}")
+            # Fallback to individual translations
+            return {}
     # Add this function to app/services/openai_service.py
 
     async def filter_best_vocabulary_words(self, word_list: List[str]) -> List[str]:

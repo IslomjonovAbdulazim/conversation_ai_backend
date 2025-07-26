@@ -479,17 +479,18 @@ async def upload_photo_ocr(
             )
 
         logger.info(f"AI filtered down to {len(filtered_words)} quality words")
-
+        from app.services.openai_service import openai_service
+        translations = await openai_service.batch_translate_to_uzbek(filtered_words)
         # Step 3: Translate only the filtered words
         translated_words = []
         for word in filtered_words:
             try:
-                translation = await translate_to_uzbek(word)
-                if translation and translation != word:  # Skip if translation failed
+                translation = translations.get(word, word)  # Fallback to original word
+                if translation and translation != word:
                     translated_words.append(ExtractedWord(
                         word=word.lower(),
                         translation=translation,
-                        confidence=0.9  # High confidence for AI-filtered words
+                        confidence=0.9
                     ))
             except Exception as e:
                 logger.warning(f"Failed to translate word '{word}': {str(e)}")
