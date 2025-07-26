@@ -111,7 +111,6 @@ def create_word_stats(word_id: int, user_id: int, db: Session) -> WordStats:
         word_id=word_id,
         user_id=user_id,
         category="not_known",
-        last_5_results="",
         total_attempts=0,
         correct_attempts=0
     )
@@ -414,7 +413,6 @@ async def get_word_details(
             },
             stats={
                 "category": word_stats.category if word_stats else "not_known",
-                "last_5_results": word_stats.last_5_results if word_stats else [],
                 "total_attempts": word_stats.total_attempts if word_stats else 0,
                 "correct_attempts": word_stats.correct_attempts if word_stats else 0,
                 "accuracy": (

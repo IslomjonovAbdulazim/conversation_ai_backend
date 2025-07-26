@@ -42,7 +42,6 @@ class WordStats(Base):
     word_id = Column(Integer, ForeignKey("words.id"), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     category = Column(String, default="not_known")  # not_known, normal, strong
-    last_5_results = Column(JSON, default=list)  # [True, False, True, ...]
     total_attempts = Column(Integer, default=0)
     correct_attempts = Column(Integer, default=0)
 
@@ -63,12 +62,6 @@ class WordStats(Base):
     def add_result(self, is_correct: bool):
         """Add new quiz result and update category"""
         # Add to results list (keep only last 5)
-        results = self.last_5_results or []
-        results.append(is_correct)
-        if len(results) > 5:
-            results = results[-5:]
-        self.last_5_results = results
-
         # Update counters
         self.total_attempts += 1
         if is_correct:
@@ -79,13 +72,7 @@ class WordStats(Base):
 
     def update_category(self):
         """Update word category based on last 5 quiz results"""
-        if not self.last_5_results or len(self.last_5_results) < 3:
-            self.category = "not_known"
-            return
-
-        # Calculate accuracy from last 5 results
-        correct_count = sum(self.last_5_results)
-        recent_accuracy = correct_count / len(self.last_5_results)
+        recent_accuracy = 0
 
         if recent_accuracy >= 0.8:  # 80% or higher
             self.category = "strong"
