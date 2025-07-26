@@ -100,7 +100,6 @@ class DeleteWordResponse(BaseModel):
 
 class TranslateWordRequest(BaseModel):
     word: str
-    language: Optional[str] = "uzbek"  # Default to Uzbek, but allows for future expansion
 
 
 class TranslationOption(BaseModel):
@@ -112,7 +111,6 @@ class TranslationOption(BaseModel):
 
 class TranslateWordResponse(BaseModel):
     word: str
-    language: str
     options: List[TranslationOption]
     total_options: int
 
@@ -829,14 +827,13 @@ async def translate_word(
         word_clean = request.word.strip().lower()
 
         # Get multiple translation options
-        translation_options = await get_translation_options(word_clean, request.language)
+        translation_options = await get_translation_options(word_clean)
 
         logger.info(
             f"Generated {len(translation_options)} translation options for '{word_clean}' by user {current_user.id}")
 
         return TranslateWordResponse(
             word=word_clean,
-            language=request.language,
             options=translation_options,
             total_options=len(translation_options)
         )
@@ -949,7 +946,7 @@ async def save_selected_translation(
 
 
 # Helper function to generate multiple translation options
-async def get_translation_options(english_word: str, target_language: str = "uzbek") -> List[TranslationOption]:
+async def get_translation_options(english_word: str) -> List[TranslationOption]:
     """
     Generate multiple translation options for a word using OpenAI
     """
@@ -960,7 +957,7 @@ async def get_translation_options(english_word: str, target_language: str = "uzb
         client = openai.OpenAI(api_key=settings.openai_api_key)
 
         prompt = f"""
-        Provide 3-4 different translation options for the English word "{english_word}" into {target_language}.
+        Provide 3-4 different translation options for the English word "{english_word}" into Uzbek.
 
         For each translation option, provide:
         1. The translation
@@ -979,7 +976,7 @@ async def get_translation_options(english_word: str, target_language: str = "uzb
             messages=[
                 {
                     "role": "system",
-                    "content": f"You are a professional English-{target_language.title()} translator. Provide multiple accurate translation options with usage contexts."
+                    "content": "You are a professional English-Uzbek translator. Provide multiple accurate translation options with usage contexts."
                 },
                 {
                     "role": "user",
