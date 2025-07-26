@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from datetime import datetime, timedelta
 import jwt
 import logging
@@ -117,13 +117,17 @@ async def apple_sign_in(
 
 @router.post("/test-login")
 async def test_login(
-        email: EmailStr,
+        email: str,
         nickname: str = "Test User",
         db: Session = Depends(get_db)
 ):
     """Test login endpoint for development"""
     if not settings.debug:
         raise HTTPException(status_code=404, detail="Endpoint not available")
+
+    # Basic email validation
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Invalid email format")
 
     # Find or create test user
     user = db.query(User).filter(User.email == email).first()
