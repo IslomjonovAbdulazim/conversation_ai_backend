@@ -407,8 +407,6 @@ def create_word_stats(word_id: int, user_id: int, db: Session) -> WordStats:
     db.flush()
     return word_stats
 
-
-
 def get_folder_or_404(folder_id: int, user_id: int, db: Session):
     """Helper function to get folder or raise 404"""
     folder = db.query(Folder).filter(
@@ -468,7 +466,7 @@ async def upload_photo_ocr(
 
         logger.info(f"Google Vision extracted {len(all_words)} raw words")
 
-        # Step 2: Use AI to filter best vocabulary words
+        # Step 2: Use AI to filter best vocabulary words (adaptive filtering)
         from app.services.openai_service import openai_service
         filtered_words = await openai_service.filter_best_vocabulary_words(all_words)
 
@@ -478,25 +476,55 @@ async def upload_photo_ocr(
                 detail="No suitable vocabulary words found in image"
             )
 
-
         logger.info(f"AI filtered down to {len(filtered_words)} quality words")
-        from app.services.openai_service import openai_service
-        translations = await openai_service.batch_translate_to_uzbek(filtered_words)
-        # Step 3: Translate only the filtered words
-        translated_words = []
-        for word in filtered_words:
-            try:
-                translation = translations.get(word, word)  # Fallback to original word
-                if translation and translation != word:
-                    translated_words.append(ExtractedWord(
-                        word=word.lower(),
-                        translation=translation,
-                        confidence=0.9
-                    ))
-            except Exception as e:
-                logger.warning(f"Failed to translate word '{word}': {str(e)}")
-                continue
 
+        # Step 3: Batch translate all filtered words
+        batch_start_time = time.time()
+        translations = await openai_service.batch_translate_to_uzbek(filtered_words)
+
+        logger.info(f"Batch translation completed in {round(time.time() - batch_start_time, 2)}s")
+
+        # Step 4: Process translations with fallback to individual translation
+        translated_words = []
+        failed_words = []
+
+        # First pass: Use batch translation results
+        for word in filtered_words:
+            translation = translations.get(word)
+
+            if translation and translation != word and translation.strip():
+                translated_words.append(ExtractedWord(
+                    word=word.lower(),
+                    translation=translation.strip(),
+                    confidence=0.9
+                ))
+            else:
+                failed_words.append(word)
+
+        # Second pass: Individual translation for failed words
+        if failed_words:
+            logger.info(f"Retrying {len(failed_words)} words with individual translation")
+            individual_start_time = time.time()
+
+            for word in failed_words:
+                try:
+                    from app.services.openai_service import translate_to_uzbek
+                    translation = await translate_to_uzbek(word)
+
+                    if translation and translation != word and translation.strip():
+                        translated_words.append(ExtractedWord(
+                            word=word.lower(),
+                            translation=translation.strip(),
+                            confidence=0.8  # Slightly lower confidence for individual translation
+                        ))
+
+                except Exception as e:
+                    logger.warning(f"Failed to translate word '{word}' individually: {str(e)}")
+                    continue
+
+            logger.info(f"Individual translation completed in {round(time.time() - individual_start_time, 2)}s")
+
+        # Final validation
         if not translated_words:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -506,7 +534,7 @@ async def upload_photo_ocr(
         processing_time = round(time.time() - start_time, 2)
 
         logger.info(
-            f"OCR completed: {len(translated_words)} final words in {processing_time}s for user {current_user.id}")
+            f"OCR completed: {len(all_words)} raw → {len(filtered_words)} filtered → {len(translated_words)} translated in {processing_time}s for user {current_user.id}")
 
         return OCRResponse(
             extracted_words=translated_words,
@@ -522,7 +550,6 @@ async def upload_photo_ocr(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to process image"
         )
-
 
 @router.post("/bulk-delete", response_model=BulkDeleteResponse)
 async def bulk_delete_words(
