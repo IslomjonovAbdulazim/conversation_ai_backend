@@ -1,4 +1,3 @@
-# Router imports for the vocabulary learning app
-from . import auth, users, folders, words, quiz, voice
+from . import auth, folders, words
 
-__all__ = ["auth", "users", "folders", "words", "quiz", "voice"]
+__all__ = ["auth", "folders", "words"]

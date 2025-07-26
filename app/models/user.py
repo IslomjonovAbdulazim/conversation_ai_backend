@@ -13,8 +13,6 @@ class User(Base):
 
     # Relationships
     folders = relationship("Folder", back_populates="user", cascade="all, delete-orphan")
-    word_stats = relationship("WordStats", back_populates="user", cascade="all, delete-orphan")
-    quiz_sessions = relationship("QuizSession", back_populates="user", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<User(id={self.id}, email='{self.email}', nickname='{self.nickname}')>"

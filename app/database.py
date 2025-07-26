@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, MetaData
+from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from app.config import settings
@@ -7,8 +7,7 @@ from app.config import settings
 engine = create_engine(
     settings.database_url,
     pool_pre_ping=True,
-    pool_recycle=300,
-    echo=settings.debug
+    pool_recycle=300
 )
 
 # Create session factory
@@ -28,7 +27,3 @@ def get_db():
 # Create all tables
 def create_tables():
     Base.metadata.create_all(bind=engine)
-
-# Drop all tables (for development)
-def drop_tables():
-    Base.metadata.drop_all(bind=engine)

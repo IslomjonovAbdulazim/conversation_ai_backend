@@ -1,5 +1,4 @@
 from pydantic_settings import BaseSettings
-from typing import Optional
 import os
 
 
@@ -8,8 +7,6 @@ class Settings(BaseSettings):
     database_url: str
 
     # API Keys
-    google_vision_api_key: str
-    elevenlabs_api_key: str
     openai_api_key: str
 
     # Apple Sign In
@@ -25,15 +22,6 @@ class Settings(BaseSettings):
     # App Settings
     debug: bool = False
     port: int = 8000
-
-    # Quiz Settings
-    min_words_for_quiz: int = 5
-    min_words_for_reading: int = 8
-    quiz_time_limits: dict = {
-        "anagram": 45,
-        "translation_blitz": 30,
-        "word_blitz": 30
-    }
 
     class Config:
         env_file = ".env"
