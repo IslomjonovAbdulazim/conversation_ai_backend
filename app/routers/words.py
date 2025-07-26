@@ -98,6 +98,12 @@ class DeleteWordResponse(BaseModel):
     message: str
     deleted_word: Dict
 
+
+# IMPORTANT: Add these endpoints BEFORE any parameterized routes (like /{folder_id})
+# in your words.py file to avoid routing conflicts!
+
+# Add these new Pydantic models to your existing models section in app/routers/words.py
+
 class TranslateWordRequest(BaseModel):
     word: str
 
@@ -106,7 +112,6 @@ class TranslationOption(BaseModel):
     translation: str
     confidence: float
     context: Optional[str] = None
-    usage_example: Optional[str] = None
 
 
 class TranslateWordResponse(BaseModel):
@@ -126,6 +131,7 @@ class SaveTranslationResponse(BaseModel):
     success: bool
     saved_word: WordResponse
     stats: Dict
+
 
 # Add these new endpoint functions to your words router
 
@@ -281,7 +287,7 @@ async def get_translation_options(english_word: str) -> List[TranslationOption]:
         Provide 3-4 different translation options for the English word "{english_word}" into Uzbek.
 
         For each translation option, provide:
-        1. The translation
+        1. The translation (plain text, no formatting)
         2. A brief context or usage note (when this translation is preferred)
 
         Format your response as a numbered list:
@@ -289,7 +295,7 @@ async def get_translation_options(english_word: str) -> List[TranslationOption]:
         2. [translation] - [context/usage note]
         3. [translation] - [context/usage note]
 
-        Make sure translations are accurate and commonly used.
+        Make sure translations are accurate and commonly used. Use plain text only, no bold or other formatting.
         """
 
         response = client.chat.completions.create(
@@ -319,8 +325,7 @@ async def get_translation_options(english_word: str) -> List[TranslationOption]:
             options = [TranslationOption(
                 translation=single_translation,
                 confidence=0.9,
-                context="Primary translation",
-                usage_example=None
+                context="Primary translation"
             )]
 
         return options
@@ -333,15 +338,13 @@ async def get_translation_options(english_word: str) -> List[TranslationOption]:
             return [TranslationOption(
                 translation=single_translation,
                 confidence=0.8,
-                context="Standard translation",
-                usage_example=None
+                context="Standard translation"
             )]
         except:
             return [TranslationOption(
                 translation=english_word,
                 confidence=0.1,
-                context="Translation unavailable",
-                usage_example=None
+                context="Translation unavailable"
             )]
 
 
@@ -411,10 +414,6 @@ def create_word_stats(word_id: int, user_id: int, db: Session) -> WordStats:
     db.add(word_stats)
     db.flush()
     return word_stats
-
-
-
-
 
 
 
