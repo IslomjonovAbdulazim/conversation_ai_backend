@@ -1,20 +1,21 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Optional
 import logging
-import openai
+from openai import OpenAI
 
 from app.database import get_db
 from app.models import User, Folder, Word
 from app.routers.auth import get_current_user
 from app.config import settings
+from app.services.vision_service import vision_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Set OpenAI API key
-openai.api_key = settings.openai_api_key
+# Initialize OpenAI client
+client = OpenAI(api_key=settings.openai_api_key)
 
 
 # Pydantic models
@@ -48,8 +49,14 @@ class TranslationSuggestionsResponse(BaseModel):
     suggestions: List[TranslationSuggestion]
 
 
-class UpdateWordTranslationRequest(BaseModel):
-    translation: str
+class ExtractedWord(BaseModel):
+    text: str
+    confidence: float
+
+
+class ImageExtractionResponse(BaseModel):
+    extracted_words: List[ExtractedWord]
+    success: bool
 
 
 # Helper function to get folder or 404
@@ -66,16 +73,16 @@ def get_folder_or_404(folder_id: int, user_id: int, db: Session) -> Folder:
 async def get_translation_suggestions(english_word: str) -> List[TranslationSuggestion]:
     """Get multiple translation suggestions for an English word using OpenAI"""
     try:
-        response = await openai.ChatCompletion.acreate(
+        response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a helpful English-Uzbek translator. Provide multiple translation options for English words with brief context when useful. Return exactly 5 different translations."
+                    "content": "You are a helpful English-Uzbek translator. Provide exactly 5 different translation options for English words. Format each as 'translation - context' where context explains when to use it."
                 },
                 {
                     "role": "user",
-                    "content": f"Translate the English word '{english_word}' to Uzbek. Provide 5 different translation options with brief context if the word has multiple meanings. Format as: translation1 (context if needed), translation2 (context if needed), etc."
+                    "content": f"Translate '{english_word}' to Uzbek. Give me 5 different options with context."
                 }
             ],
             max_tokens=200,
@@ -85,37 +92,50 @@ async def get_translation_suggestions(english_word: str) -> List[TranslationSugg
         content = response.choices[0].message.content.strip()
         suggestions = []
 
-        # Parse the response and extract translations
+        # Parse the response
         lines = content.split('\n')
-        for line in lines[:5]:  # Take only first 5
+        for line in lines:
             line = line.strip()
-            if line and not line.startswith(('1.', '2.', '3.', '4.', '5.')):
-                # Remove numbering if present
-                line = line.lstrip('12345.- ')
+            if not line:
+                continue
 
-            if '(' in line and ')' in line:
-                # Extract translation and context
-                translation = line.split('(')[0].strip()
-                context = line.split('(')[1].split(')')[0].strip()
+            # Remove numbering if present
+            line = line.lstrip('12345.- ')
+
+            if ' - ' in line:
+                parts = line.split(' - ', 1)
+                translation = parts[0].strip()
+                context = parts[1].strip()
                 suggestions.append(TranslationSuggestion(
                     translation=translation,
                     context=context
                 ))
-            else:
-                # Just translation without context
-                if line:
-                    suggestions.append(TranslationSuggestion(
-                        translation=line.strip(),
-                        context=None
-                    ))
+            elif line:
+                suggestions.append(TranslationSuggestion(
+                    translation=line.strip(),
+                    context=None
+                ))
 
-        # If parsing failed, provide fallback
+        # Ensure we have at least some suggestions
         if not suggestions:
-            suggestions = [
-                TranslationSuggestion(translation="tarjima", context="general translation"),
-                TranslationSuggestion(translation="ma'no", context="meaning/sense"),
-                TranslationSuggestion(translation="tushuncha", context="concept"),
-            ]
+            # Add basic fallbacks for common words
+            word_lower = english_word.lower()
+            if word_lower == "car":
+                suggestions = [
+                    TranslationSuggestion(translation="mashina", context="general vehicle"),
+                    TranslationSuggestion(translation="avtomobil", context="formal term"),
+                    TranslationSuggestion(translation="transport", context="means of transport"),
+                ]
+            elif word_lower == "house":
+                suggestions = [
+                    TranslationSuggestion(translation="uy", context="general house"),
+                    TranslationSuggestion(translation="bino", context="building"),
+                    TranslationSuggestion(translation="turar joy", context="dwelling place"),
+                ]
+            else:
+                suggestions = [
+                    TranslationSuggestion(translation=f"{english_word} (tarjima kerak)", context="needs translation"),
+                ]
 
         return suggestions[:5]  # Return max 5 suggestions
 
@@ -127,6 +147,60 @@ async def get_translation_suggestions(english_word: str) -> List[TranslationSugg
             TranslationSuggestion(translation="ma'no", context="meaning"),
             TranslationSuggestion(translation="tushuncha", context="concept"),
         ]
+
+
+async def extract_text_from_image(image_content: bytes) -> List[ExtractedWord]:
+    """Extract text from image using Google Vision API"""
+    try:
+        words_data = vision_service.extract_text(image_content)
+
+        extracted_words = []
+        for word_data in words_data:
+            extracted_words.append(ExtractedWord(
+                text=word_data["text"],
+                confidence=word_data["confidence"]
+            ))
+
+        return extracted_words
+
+    except Exception as e:
+        logger.error(f"Error extracting text from image: {str(e)}")
+        return []
+
+
+@router.post("/extract-image", response_model=ImageExtractionResponse)
+async def extract_text_from_uploaded_image(
+        file: UploadFile = File(...),
+        current_user: User = Depends(get_current_user)
+):
+    """Extract text from uploaded image"""
+    try:
+        # Validate file type
+        if not file.content_type.startswith('image/'):
+            raise HTTPException(
+                status_code=400,
+                detail="File must be an image"
+            )
+
+        # Read image content
+        image_content = await file.read()
+
+        # Extract text
+        extracted_words = await extract_text_from_image(image_content)
+
+        return ImageExtractionResponse(
+            extracted_words=extracted_words,
+            success=True
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error extracting image text: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to extract text from image"
+        )
 
 
 @router.post("/suggestions", response_model=TranslationSuggestionsResponse)
@@ -297,47 +371,6 @@ async def update_word(
     except Exception as e:
         logger.error(f"Error updating word: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to update word")
-
-
-@router.put("/{word_id}/translation", response_model=WordResponse)
-async def update_word_translation(
-        word_id: int,
-        request: UpdateWordTranslationRequest,
-        current_user: User = Depends(get_current_user),
-        db: Session = Depends(get_db)
-):
-    """Update only the translation of a word (for when user chooses from suggestions)"""
-    try:
-        # Get word that belongs to user's folder
-        word = db.query(Word).join(Folder).filter(
-            Word.id == word_id,
-            Folder.user_id == current_user.id
-        ).first()
-
-        if not word:
-            raise HTTPException(status_code=404, detail="Word not found")
-
-        if not request.translation or len(request.translation.strip()) == 0:
-            raise HTTPException(status_code=400, detail="Translation cannot be empty")
-
-        # Update only the translation
-        word.translation = request.translation.strip()
-        db.commit()
-        db.refresh(word)
-
-        return WordResponse(
-            id=word.id,
-            word=word.word,
-            translation=word.translation,
-            example_sentence=word.example_sentence,
-            created_at=word.created_at.isoformat()
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error updating word translation: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to update word translation")
 
 
 @router.delete("/{word_id}")

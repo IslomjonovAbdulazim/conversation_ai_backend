@@ -8,6 +8,8 @@ class Settings(BaseSettings):
 
     # API Keys
     openai_api_key: str
+    google_vision_api_key: str
+    elevenlabs_api_key: str
 
     # Apple Sign In
     apple_team_id: str

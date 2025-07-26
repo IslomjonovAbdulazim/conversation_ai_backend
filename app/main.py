@@ -4,7 +4,7 @@ import logging
 
 from app.config import settings
 from app.database import create_tables
-from app.routers import auth, folders, words
+from app.routers import auth, folders, words, voice
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -26,10 +26,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers (quiz and voice removed)
+# Include routers
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(folders.router, prefix="/folders", tags=["Folders"])
 app.include_router(words.router, prefix="/words", tags=["Words"])
+app.include_router(voice.router, prefix="/voice", tags=["Voice"])
 
 @app.on_event("startup")
 async def startup_event():
