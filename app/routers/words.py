@@ -98,6 +98,36 @@ class DeleteWordResponse(BaseModel):
     message: str
     deleted_word: Dict
 
+class TranslateWordRequest(BaseModel):
+    word: str
+    language: Optional[str] = "uzbek"  # Default to Uzbek, but allows for future expansion
+
+
+class TranslationOption(BaseModel):
+    translation: str
+    confidence: float
+    context: Optional[str] = None
+    usage_example: Optional[str] = None
+
+
+class TranslateWordResponse(BaseModel):
+    word: str
+    language: str
+    options: List[TranslationOption]
+    total_options: int
+
+
+class SaveTranslationRequest(BaseModel):
+    word: str
+    selected_translation: str
+    folder_id: int
+    generate_example: Optional[bool] = True
+
+
+class SaveTranslationResponse(BaseModel):
+    success: bool
+    saved_word: WordResponse
+    stats: Dict
 
 def get_folder_or_404(folder_id: int, user_id: int, db: Session):
     """Helper function to get folder or raise 404"""
@@ -778,3 +808,288 @@ async def delete_word(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete word"
         )
+
+
+@router.post("/translate", response_model=TranslateWordResponse)
+async def translate_word(
+        request: TranslateWordRequest,
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db)
+):
+    """
+    Get multiple translation options for an English word
+    """
+    try:
+        if not request.word or len(request.word.strip()) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Word cannot be empty"
+            )
+
+        word_clean = request.word.strip().lower()
+
+        # Get multiple translation options
+        translation_options = await get_translation_options(word_clean, request.language)
+
+        logger.info(
+            f"Generated {len(translation_options)} translation options for '{word_clean}' by user {current_user.id}")
+
+        return TranslateWordResponse(
+            word=word_clean,
+            language=request.language,
+            options=translation_options,
+            total_options=len(translation_options)
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error translating word '{request.word}': {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to translate word"
+        )
+
+
+@router.post("/save-translation", response_model=SaveTranslationResponse)
+async def save_selected_translation(
+        request: SaveTranslationRequest,
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db)
+):
+    """
+    Save the user's selected translation to a folder
+    """
+    try:
+        # Validate input
+        if not request.word or len(request.word.strip()) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Word cannot be empty"
+            )
+
+        if not request.selected_translation or len(request.selected_translation.strip()) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Translation cannot be empty"
+            )
+
+        # Get folder
+        folder = get_folder_or_404(request.folder_id, current_user.id, db)
+
+        word_clean = request.word.strip().lower()
+        translation_clean = request.selected_translation.strip()
+
+        # Check if word already exists in this folder
+        existing_word = db.query(Word).filter(
+            Word.folder_id == request.folder_id,
+            Word.word.ilike(word_clean)
+        ).first()
+
+        if existing_word:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Word already exists in this folder"
+            )
+
+        # Generate example sentence if requested
+        example_sentence = None
+        if request.generate_example:
+            try:
+                example_sentence = await generate_example_sentence(word_clean, translation_clean)
+            except Exception as e:
+                logger.warning(f"Failed to generate example for '{word_clean}': {str(e)}")
+                # Continue without example sentence
+
+        # Create new word
+        word = Word(
+            folder_id=request.folder_id,
+            word=word_clean,
+            translation=translation_clean,
+            example_sentence=example_sentence
+        )
+
+        db.add(word)
+        db.flush()  # Get word.id
+
+        # Create word stats
+        word_stats = create_word_stats(word.id, current_user.id, db)
+
+        db.commit()
+        db.refresh(word)
+
+        logger.info(
+            f"Saved translation '{word_clean}' -> '{translation_clean}' to folder {request.folder_id} by user {current_user.id}")
+
+        return SaveTranslationResponse(
+            success=True,
+            saved_word=WordResponse(
+                id=word.id,
+                word=word.word,
+                translation=word.translation,
+                example_sentence=word.example_sentence,
+                added_at=word.added_at.isoformat()
+            ),
+            stats={
+                "category": word_stats.category,
+                "total_attempts": word_stats.total_attempts,
+                "correct_attempts": word_stats.correct_attempts
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error saving translation: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save translation"
+        )
+
+
+# Helper function to generate multiple translation options
+async def get_translation_options(english_word: str, target_language: str = "uzbek") -> List[TranslationOption]:
+    """
+    Generate multiple translation options for a word using OpenAI
+    """
+    try:
+        import openai
+        from app.config import settings
+
+        client = openai.OpenAI(api_key=settings.openai_api_key)
+
+        prompt = f"""
+        Provide 3-4 different translation options for the English word "{english_word}" into {target_language}.
+
+        For each translation option, provide:
+        1. The translation
+        2. A brief context or usage note (when this translation is preferred)
+
+        Format your response as a numbered list:
+        1. [translation] - [context/usage note]
+        2. [translation] - [context/usage note]
+        3. [translation] - [context/usage note]
+
+        Make sure translations are accurate and commonly used.
+        """
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": f"You are a professional English-{target_language.title()} translator. Provide multiple accurate translation options with usage contexts."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            max_tokens=300,
+            temperature=0.3  # Some variation for different options
+        )
+
+        response_text = response.choices[0].message.content.strip()
+
+        # Parse the response into TranslationOption objects
+        options = parse_translation_options(response_text)
+
+        # If parsing fails, fall back to single translation
+        if not options:
+            single_translation = await translate_to_uzbek(english_word)
+            options = [TranslationOption(
+                translation=single_translation,
+                confidence=0.9,
+                context="Primary translation",
+                usage_example=None
+            )]
+
+        return options
+
+    except Exception as e:
+        logger.error(f"Error getting translation options for '{english_word}': {str(e)}")
+        # Fallback to single translation
+        try:
+            single_translation = await translate_to_uzbek(english_word)
+            return [TranslationOption(
+                translation=single_translation,
+                confidence=0.8,
+                context="Standard translation",
+                usage_example=None
+            )]
+        except:
+            return [TranslationOption(
+                translation=english_word,
+                confidence=0.1,
+                context="Translation unavailable",
+                usage_example=None
+            )]
+
+
+def parse_translation_options(response_text: str) -> List[TranslationOption]:
+    """
+    Parse OpenAI response into TranslationOption objects
+    """
+    options = []
+    lines = response_text.strip().split('\n')
+
+    for line in lines:
+        line = line.strip()
+        if not line or not any(char.isdigit() for char in line[:3]):
+            continue
+
+        try:
+            # Remove number prefix (1. 2. etc.)
+            clean_line = line
+            for i in range(5):
+                if clean_line.startswith(f"{i}.") or clean_line.startswith(f"{i})"):
+                    clean_line = clean_line[2:].strip()
+                    break
+
+            # Split by dash or hyphen
+            if ' - ' in clean_line:
+                translation, context = clean_line.split(' - ', 1)
+            elif ' – ' in clean_line:
+                translation, context = clean_line.split(' – ', 1)
+            else:
+                translation = clean_line
+                context = "Standard usage"
+
+            translation = translation.strip()
+            context = context.strip() if context else "Standard usage"
+
+            if translation:
+                # Assign confidence based on position (first option = highest confidence)
+                confidence = max(0.95 - (len(options) * 0.1), 0.7)
+
+                options.append(TranslationOption(
+                    translation=translation,
+                    confidence=confidence,
+                    context=context,
+                    usage_example=None
+                ))
+
+        except Exception as e:
+            logger.warning(f"Failed to parse translation line: {line}")
+            continue
+
+    return options
+
+
+# You'll also need to import this helper function if it doesn't exist
+def create_word_stats(word_id: int, user_id: int, db: Session) -> WordStats:
+    """
+    Create initial word stats for a new word
+    """
+    word_stats = WordStats(
+        word_id=word_id,
+        user_id=user_id,
+        category="not_known",
+        last_5_results="",
+        total_attempts=0,
+        correct_attempts=0
+    )
+    db.add(word_stats)
+    db.flush()
+    return word_stats
